@@ -105,6 +105,8 @@ for x in \${cmdline}; do
 	esac
 done
 
+# XXX: lilo likes to pass things like root=800
+
 [ -e "\${root}" ] || root=/rdev\${root#/dev}
 if mount -o ro -t "\${rootfstype}" "\${root}" /root; then
 	if [ -n "\${usr}" ]; then
@@ -121,6 +123,8 @@ fi
 # fallback
 exec sh
 _EOF_
+	chmod +x "${temporary_root}"/init \
+		|| die 'Unable to make init executable.'
 }
 
 find_mounts() {
