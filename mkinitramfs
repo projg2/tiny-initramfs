@@ -106,10 +106,10 @@ for x in \${cmdline}; do
 done
 
 [ -e "\${root}" ] || root=/rdev\${root#/dev}
-if mount -t "\${rootfstype}" "\${root}" /root; then
+if mount -o ro -t "\${rootfstype}" "\${root}" /root; then
 	if [ -n "\${usr}" ]; then
 		[ -e "\${usr}" ] || usr=/rdev\${usr#/dev}
-		mount -t "\${usrfstype}" "\${usr}" /root/usr
+		mount -o ro -t "\${usrfstype}" "\${usr}" /root/usr
 	fi
 
 	mount -o move /proc /root/proc
