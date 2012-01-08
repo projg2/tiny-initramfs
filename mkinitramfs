@@ -1,0 +1,108 @@
+#!/usr/bin/env sh
+# (c) 2012 Michał Górny
+# Released under the terms of the 2-clause BSD license
+
+die() {
+	echo "${@}" >&2
+	echo 'Aborting.' >&2
+	exit 1
+}
+
+parse_options() {
+	output_file=/boot/initramfs
+
+	while [ -n "${1}" ]; do
+		case "${1}" in
+			-h|--help)
+				cat <<_EOF_
+Synopsis:
+	${0} [-o output]
+
+-o output, --output output
+	Write resulting initramfs into specified file (def: /boot/initramfs)
+_EOF_
+				exit 0
+				;;
+			-V|--version)
+				echo 'mkinitramfs 0'
+				exit 0
+				;;
+
+			-o|--output)
+				shift
+				[ -n "${1}" ] || die "--output requires an argument."
+				output_file=${1}
+				;;
+		esac
+
+		shift
+	done
+}
+
+find_klibc() {
+	klibc_bindir=$(klcc -print-klibc-bindir)
+	klibc_libdir=$(klcc -print-klibc-libdir)
+	if [ -z "${klibc_bindir}" ] || [ -z "${klibc_libdir}" ]; then
+		die "klibc not found. Please install dev-libs/klibc."
+	fi
+}
+
+init_fs() {
+	temporary_root=$(mktemp -d)
+	trap "rm -r '${temporary_root}'" EXIT
+
+	mkdir \
+		"${temporary_root}"/bin \
+		"${temporary_root}"/dev \
+		"${temporary_root}"/lib \
+		"${temporary_root}"/proc \
+		"${temporary_root}"/root \
+		|| die 'Unable to create initramfs directories.'
+
+	# XXX: klibc seems to use lib64 on amd64
+	ln -s lib "${temporary_root}"/lib64 \
+		|| die 'Unable to create lib64 symlink.'
+
+	cp \
+		"${klibc_bindir}"/mount \
+		"${klibc_bindir}"/run-init \
+		"${temporary_root}"/bin/ \
+		|| die 'Unable to copy mount & run-init.'
+
+	cp "${klibc_bindir}"/sh.shared "${temporary_root}"/bin/sh \
+		|| die 'Unable to copy shell.'
+
+	cp "${klibc_libdir}"/klibc-*.so "${temporary_root}"/lib/ \
+		|| die 'Unable to copy klibc.'
+}
+
+find_mounts() {
+	while read line; do
+		set -- ${line}
+		devid=${3}
+		relroot=${4}
+		absmount=${5}
+
+		case ${absmount} in
+			/|/usr);;
+			*) continue;;
+		esac
+
+		[ ${relroot} != / ] && die 'Mountpoints not in filesystem root unsupported.'
+
+		shift 6
+		while [ ${1} != - ]; do shift; done
+
+		fstype=${2}
+		devpath=${3}
+
+		echo "${absmount} at ${devid} (${devpath}), type: ${fstype}"
+		mknod "${temporary_root}"/dev/"${devpath##*/}" \
+			b ${devid%:*} ${devid#*:} || die "mknod for ${devid} failed."
+	done </proc/self/mountinfo
+}
+
+parse_options "${@}"
+find_klibc
+init_fs
+find_mounts
