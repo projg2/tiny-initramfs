@@ -54,6 +54,7 @@ init_fs() {
 	mkdir \
 		"${temporary_root}"/bin \
 		"${temporary_root}"/dev \
+		"${temporary_root}"/rdev \
 		"${temporary_root}"/lib \
 		"${temporary_root}"/proc \
 		"${temporary_root}"/root \
@@ -74,6 +75,52 @@ init_fs() {
 
 	cp "${klibc_libdir}"/klibc-*.so "${temporary_root}"/lib/ \
 		|| die 'Unable to copy klibc.'
+
+	cat > "${temporary_root}"/init <<_EOF_
+#!/bin/sh
+
+mount -t proc proc /proc
+mount -t devtmpfs dev /rdev
+
+. /fsinit
+
+read cmdline < /proc/cmdline
+for x in \${cmdline}; do
+	case \${x} in
+		init=*)
+			init=\${x#init=}
+			;;
+		root=*)
+			root=\${x#root=}
+			;;
+		rootfstype=*)
+			rootfstype=\${x#rootfstype=}
+			;;
+		usr=*)
+			usr=\${x#usr=}
+			;;
+		usrfstype=*)
+			usrfstype=\${x#usrfstype=}
+			;;
+	esac
+done
+
+[ -e "\${root}" ] || root=/rdev\${root#/dev}
+if mount -t "\${rootfstype}" "\${root}" /root; then
+	if [ -n "\${usr}" ]; then
+		[ -e "\${usr}" ] || usr=/rdev\${usr#/dev}
+		mount -t "\${usrfstype}" "\${usr}" /root/usr
+	fi
+
+	mount -o move /proc /root/proc
+	mount -o move /rdev /root/dev
+
+	exec run-init /root "\${init}"
+fi
+
+# fallback
+exec sh
+_EOF_
 }
 
 find_mounts() {
@@ -84,7 +131,8 @@ find_mounts() {
 		absmount=${5}
 
 		case ${absmount} in
-			/|/usr);;
+			/) which=root;;
+			/usr) which=usr;;
 			*) continue;;
 		esac
 
@@ -96,13 +144,23 @@ find_mounts() {
 		fstype=${2}
 		devpath=${3}
 
-		echo "${absmount} at ${devid} (${devpath}), type: ${fstype}"
+		echo "${which}='/dev/${devpath##*/}'"
+		echo "${which}fstype='${fstype}'"
+
+		echo "Found ${absmount} at ${devid} (${devpath}), type: ${fstype}" >&2
 		mknod "${temporary_root}"/dev/"${devpath##*/}" \
 			b ${devid%:*} ${devid#*:} || die "mknod for ${devid} failed."
-	done </proc/self/mountinfo
+	done </proc/self/mountinfo >>"${temporary_root}"/fsinit
 }
 
 parse_options "${@}"
 find_klibc
 init_fs
 find_mounts
+
+exec >"${output_file}"
+cd "${temporary_root}"
+find . | cpio -o -v
+
+echo 'Done.' >&2
+exit 0
